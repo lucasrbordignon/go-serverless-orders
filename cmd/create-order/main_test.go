@@ -8,7 +8,12 @@ import (
 )
 
 func TestHandler(t *testing.T) {
-	request := events.APIGatewayProxyRequest{}
+	request := events.APIGatewayProxyRequest{
+		Body: `{
+			"customer_id": "123",
+			"amount": 100.5
+		}`,
+	}
 
 	response, err := handler(context.Background(), request)
 
