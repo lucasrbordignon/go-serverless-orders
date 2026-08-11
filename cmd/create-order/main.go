@@ -27,6 +27,20 @@ func handler(
 		}, nil
 	}
 
+	if body.CustomerID == "" {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       `{"error":"customer_id is required"}`,
+		}, nil
+	}
+
+	if body.Amount <= 0 {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       `{"error":"amount must be greater than 0"}`,
+		}, nil
+	}
+
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
 		Body:       `{"message":"order received"}`,
