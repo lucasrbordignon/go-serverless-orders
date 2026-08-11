@@ -1,0 +1,15 @@
+# Binaries
+/create-order
+*.exe
+*.out
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
