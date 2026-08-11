@@ -17,3 +17,6 @@
 # Zipping
 bootstrap
 function.zip
+
+event.json
+response.json
