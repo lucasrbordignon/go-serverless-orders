@@ -1,22 +1,33 @@
 # Go Serverless Orders
 
-Projeto de estudo de arquitetura serverless e orientada a eventos utilizando **Go** e serviços AWS.
+Projeto de estudo de arquitetura **serverless e event-driven** utilizando Go e serviços AWS.
 
 A infraestrutura AWS é executada localmente utilizando **MiniStack**.
 
 ## Arquitetura
 
-Neste momento, o projeto possui apenas a primeira Lambda:
+Estado atual:
 
 ```text
-Request
-   │
-   ▼
+Client
+  │
+  │ POST /orders
+  ▼
+API Gateway
+  │
+  │ AWS_PROXY
+  ▼
 Lambda
 create-order
+
+
+SQS
+order-processing
 ```
 
-A arquitetura será evoluída gradualmente para:
+> Neste momento, a Lambda e o SQS já estão funcionando isoladamente. A integração `create-order → SQS` será implementada na próxima etapa.
+
+Arquitetura planejada:
 
 ```text
 Client
@@ -26,15 +37,19 @@ API Gateway
   │
   ▼
 Lambda
+create-order
   │
   ▼
 SQS
+order-processing
   │
   ▼
 Lambda
+process-order
   │
   ▼
 SNS
+order-events
   │
   ├── Consumer
   ├── Consumer
@@ -45,9 +60,9 @@ SNS
 
 - Go
 - AWS Lambda
-- API Gateway
-- SQS
-- SNS
+- Amazon API Gateway
+- Amazon SQS
+- Amazon SNS
 - MiniStack
 - Docker
 - AWS CLI
@@ -84,41 +99,21 @@ aws --version
 zip --version
 ```
 
-## 1. Instalar dependências
+## Configuração local
 
-Na raiz do projeto:
+### 1. Instalar dependências
 
 ```bash
 go mod download
 ```
 
-## 2. Executar os testes
-
-Execute todos os testes:
+### 2. Executar testes
 
 ```bash
 go test ./... -v
 ```
 
-## 3. Compilar
-
-Para verificar se o projeto compila:
-
-```bash
-go build ./cmd/create-order
-```
-
-Isso gera o executável:
-
-```text
-create-order
-```
-
-Esse executável é apenas um artefato local e não deve ser versionado.
-
-## 4. Iniciar o MiniStack
-
-Execute:
+### 3. Iniciar o MiniStack
 
 ```bash
 docker run -d \
@@ -127,21 +122,15 @@ docker run -d \
   ministackorg/ministack
 ```
 
-Verifique:
-
-```bash
-docker ps
-```
-
-Se o container já existir e estiver parado:
+Se o container já existir:
 
 ```bash
 docker start ministack
 ```
 
-## 5. Configurar AWS CLI para desenvolvimento local
+### 4. Configurar AWS CLI
 
-Configure credenciais locais:
+O ambiente local utiliza credenciais fictícias:
 
 ```bash
 export AWS_ACCESS_KEY_ID=test
@@ -149,25 +138,20 @@ export AWS_SECRET_ACCESS_KEY=test
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-Essas credenciais são utilizadas somente para acessar o ambiente AWS local.
-
-Para verificar a comunicação:
+Verifique a comunicação:
 
 ```bash
 aws \
+  --region us-east-1 \
   --endpoint-url=http://localhost:4566 \
   lambda list-functions
 ```
 
-## 6. Gerar o binário da Lambda
+## Lambda `create-order`
 
-A Lambda utiliza o runtime:
+### Build
 
-```text
-provided.al2023
-```
-
-Compile o projeto para Linux:
+A Lambda utiliza o runtime `provided.al2023`.
 
 ```bash
 GOOS=linux \
@@ -176,42 +160,17 @@ CGO_ENABLED=0 \
 go build -o bootstrap ./cmd/create-order
 ```
 
-Verifique o binário:
-
-```bash
-file bootstrap
-```
-
-O executável deve ser um ELF Linux `x86-64`.
-
-## 7. Criar o pacote da Lambda
-
-Compacte o `bootstrap`:
+### Empacotamento
 
 ```bash
 zip function.zip bootstrap
 ```
 
-O arquivo gerado será:
-
-```text
-function.zip
-```
-
-Os artefatos abaixo não devem ser versionados:
-
-```gitignore
-create-order
-bootstrap
-function.zip
-```
-
-## 8. Criar a Lambda no MiniStack
-
-Com o MiniStack rodando:
+### Criar a Lambda
 
 ```bash
 aws \
+  --region us-east-1 \
   --endpoint-url=http://localhost:4566 \
   lambda create-function \
   --function-name create-order \
@@ -221,47 +180,155 @@ aws \
   --role arn:aws:iam::000000000000:role/lambda-role
 ```
 
-Confira as funções disponíveis:
+## API Gateway
+
+Criamos uma REST API que expõe:
+
+```http
+POST /orders
+```
+
+Fluxo:
+
+```text
+POST /orders
+      │
+      ▼
+ API Gateway
+      │
+      │ AWS_PROXY
+      ▼
+ create-order
+```
+
+### Testar a API
+
+Após criar o deployment no stage `dev`:
+
+```bash
+curl -X POST \
+  "http://localhost:4566/restapis/$API_ID/dev/_user_request_/orders" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "customer-123",
+    "amount": 150.50
+  }'
+```
+
+Resposta atual:
+
+```json
+{
+  "message": "order received"
+}
+```
+
+## SQS
+
+A fila responsável pelo processamento assíncrono dos pedidos é:
+
+```text
+order-processing
+```
+
+### Criar a fila
 
 ```bash
 aws \
+  --region us-east-1 \
   --endpoint-url=http://localhost:4566 \
-  lambda list-functions
+  sqs create-queue \
+  --queue-name order-processing
 ```
 
-A função `create-order` deverá aparecer na resposta.
+### Obter a URL da fila
 
-## Desenvolvimento
+```bash
+QUEUE_URL=$(aws \
+  --region us-east-1 \
+  --endpoint-url=http://localhost:4566 \
+  sqs get-queue-url \
+  --queue-name order-processing \
+  --query 'QueueUrl' \
+  --output text)
+```
 
-Depois de modificar o código da Lambda, execute novamente:
+### Enviar uma mensagem manualmente
+
+```bash
+aws \
+  --region us-east-1 \
+  --endpoint-url=http://localhost:4566 \
+  sqs send-message \
+  --queue-url "$QUEUE_URL" \
+  --message-body '{"customer_id":"customer-123","amount":150.50}'
+```
+
+### Consumir uma mensagem manualmente
+
+```bash
+aws \
+  --region us-east-1 \
+  --endpoint-url=http://localhost:4566 \
+  sqs receive-message \
+  --queue-url "$QUEUE_URL"
+```
+
+Essa etapa valida o SQS isoladamente antes da integração com a Lambda.
+
+## Fluxo de desenvolvimento
+
+Depois de modificar a Lambda:
 
 ```bash
 go test ./... -v
 ```
 
-E gere novamente os artefatos:
+Compile novamente:
 
 ```bash
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 go build -o bootstrap ./cmd/create-order
+```
 
+Atualize o ZIP:
+
+```bash
 zip -f function.zip bootstrap
+```
+
+## Arquivos locais
+
+Não devem ser versionados:
+
+```gitignore
+create-order
+bootstrap
+function.zip
+event.json
+response.json
 ```
 
 ## Status
 
-- [x] Projeto Go
+- [x] Inicialização do projeto Go
 - [x] Handler Lambda
 - [x] Testes unitários
 - [x] Parsing do request
-- [x] Validação inicial
+- [x] Validação do request
 - [x] MiniStack
 - [x] Build para AWS Lambda
-- [ ] Executar Lambda localmente
-- [ ] API Gateway
-- [ ] SQS
-- [ ] Processamento assíncrono
+- [x] Execução da Lambda no MiniStack
+- [x] API Gateway
+- [x] `POST /orders`
+- [x] Integração API Gateway → Lambda
+- [x] SQS `order-processing`
+- [x] Envio e consumo manual de mensagens SQS
+- [ ] Integração Lambda → SQS
+- [ ] Lambda `process-order`
+- [ ] Integração SQS → Lambda
 - [ ] SNS
+- [ ] Fan-out
 - [ ] DLQ
 - [ ] Idempotência
 - [ ] Observabilidade
