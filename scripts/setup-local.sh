@@ -89,6 +89,25 @@ rm bootstrap
 # SQS
 # ---------------------------------------------------------
 
+echo "==> Creating order-processing DLQ"
+
+DLQ_URL=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs create-queue \
+  --queue-name order-processing-dlq \
+  --query 'QueueUrl' \
+  --output text)
+
+DLQ_ARN=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs get-queue-attributes \
+  --queue-url "$DLQ_URL" \
+  --attribute-names QueueArn \
+  --query 'Attributes.QueueArn' \
+  --output text)
+
 echo "==> Creating order-processing queue"
 
 QUEUE_URL=$(aws \
@@ -98,6 +117,29 @@ QUEUE_URL=$(aws \
   --queue-name order-processing \
   --query 'QueueUrl' \
   --output text)
+
+REDRIVE_POLICY=$(printf \
+  '{"deadLetterTargetArn":"%s","maxReceiveCount":"3"}' \
+  "$DLQ_ARN"
+)
+
+ATTRIBUTES_JSON=$(python3 -c '
+import json
+import sys
+
+redrive_policy = sys.argv[1]
+
+print(json.dumps({
+    "RedrivePolicy": redrive_policy
+}))
+' "$REDRIVE_POLICY")
+
+aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs set-queue-attributes \
+  --queue-url "$QUEUE_URL" \
+  --attributes "$ATTRIBUTES_JSON"
 
 QUEUE_ARN=$(aws \
   --region "$REGION" \
@@ -458,9 +500,9 @@ echo
 echo "SQS:"
 echo "$QUEUE_URL"
 echo
+echo "DLQ:"
+echo "$DLQ_URL"
+echo
 echo "SNS:"
 echo "$TOPIC_ARN"
-echo
-echo "Test:"
-echo "curl -X POST \"$API_URL\" -H \"Content-Type: application/json\" -d '{\"customer_id\":\"customer-123\",\"amount\":150.50}'"
 echo
