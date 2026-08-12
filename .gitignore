@@ -1,5 +1,6 @@
 # Binaries
 /create-order
+/process-order
 *.exe
 *.out
 
