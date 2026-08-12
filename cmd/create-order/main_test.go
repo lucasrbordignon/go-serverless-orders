@@ -39,7 +39,7 @@ func TestHandler(t *testing.T) {
 		t.Fatalf("expected status code 202, got %d", response.StatusCode)
 	}
 
-	expectedBody := `{"message":"order received"}`
+	expectedBody := `{"message":"order queued"}`
 
 	if response.Body != expectedBody {
 		t.Fatalf("expected body %s, got %s", expectedBody, response.Body)
