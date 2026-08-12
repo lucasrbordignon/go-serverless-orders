@@ -77,6 +77,14 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 zip -q function-notification-consumer.zip bootstrap
 rm bootstrap
 
+echo "==> Building audit-consumer"
+
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -o bootstrap ./cmd/audit-consumer
+
+zip -q function-audit-consumer.zip bootstrap
+rm bootstrap
+
 # ---------------------------------------------------------
 # SQS
 # ---------------------------------------------------------
@@ -121,6 +129,25 @@ NOTIFICATION_QUEUE_ARN=$(aws \
   --query 'Attributes.QueueArn' \
   --output text)
 
+echo "==> Creating audit queue"
+
+AUDIT_QUEUE_URL=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs create-queue \
+  --queue-name audit-queue \
+  --query 'QueueUrl' \
+  --output text)
+
+AUDIT_QUEUE_ARN=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs get-queue-attributes \
+  --queue-url "$AUDIT_QUEUE_URL" \
+  --attribute-names QueueArn \
+  --query 'Attributes.QueueArn' \
+  --output text)
+
 # ---------------------------------------------------------
 # SNS
 # ---------------------------------------------------------
@@ -134,6 +161,17 @@ TOPIC_ARN=$(aws \
   --name order-events \
   --query 'TopicArn' \
   --output text)
+
+echo "==> Subscribing audit queue to SNS"
+
+aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sns subscribe \
+  --topic-arn "$TOPIC_ARN" \
+  --protocol sqs \
+  --notification-endpoint "$AUDIT_QUEUE_ARN" \
+  >/dev/null
 
 echo "==> Subscribing notification queue to SNS"
 
@@ -261,6 +299,38 @@ else
     >/dev/null
 fi
 
+# ---------------------------------------------------------
+# Lambda audit-consumer
+# ---------------------------------------------------------
+
+echo "==> Deploying audit-consumer Lambda"
+
+if aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda get-function \
+  --function-name audit-consumer \
+  >/dev/null 2>&1; then
+
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda update-function-code \
+    --function-name audit-consumer \
+    --zip-file fileb://function-audit-consumer.zip \
+    >/dev/null
+else
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda create-function \
+    --function-name audit-consumer \
+    --runtime provided.al2023 \
+    --handler bootstrap \
+    --zip-file fileb://function-audit-consumer.zip \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    >/dev/null
+fi
 
 # ---------------------------------------------------------
 # SQS -> Lambda
@@ -288,7 +358,16 @@ aws \
   --batch-size 1 \
   >/dev/null
 
+echo "==> Connecting audit-queue to audit-consumer"
 
+aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda create-event-source-mapping \
+  --function-name audit-consumer \
+  --event-source-arn "$AUDIT_QUEUE_ARN" \
+  --batch-size 1 \
+  >/dev/null
 # ---------------------------------------------------------
 # API Gateway
 # ---------------------------------------------------------
