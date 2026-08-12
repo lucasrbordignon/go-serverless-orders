@@ -69,6 +69,14 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 zip -q function-process-order.zip bootstrap
 rm bootstrap
 
+echo "==> Building notification-consumer"
+
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -o bootstrap ./cmd/notification-consumer
+
+zip -q function-notification-consumer.zip bootstrap
+rm bootstrap
+
 # ---------------------------------------------------------
 # SQS
 # ---------------------------------------------------------
@@ -280,8 +288,6 @@ aws \
   --batch-size 1 \
   >/dev/null
 
-
-echo "==> Subscribing notification queue to SNS"
 
 # ---------------------------------------------------------
 # API Gateway
