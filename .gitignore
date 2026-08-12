@@ -16,7 +16,9 @@
 .DS_Store
 
 # Zipping
-bootstrap
+bootstrap-process-order
+
+function-process-order.zip
 function.zip
 
 event.json
