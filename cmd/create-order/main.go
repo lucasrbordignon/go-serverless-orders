@@ -92,7 +92,7 @@ func handler(
 
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusAccepted,
-		Body:       `{"message":"order received"}`,
+		Body:       `{"message":"order queued"}`,
 	}, nil
 }
 
