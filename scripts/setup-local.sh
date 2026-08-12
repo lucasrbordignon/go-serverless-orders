@@ -20,7 +20,7 @@ echo "==> Setting up local environment"
 
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
   echo "==> Creating Docker network"
-  docker network create "$NETWORK"
+  docker network create "$NETWORK" >/dev/null
 fi
 
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
@@ -31,13 +31,13 @@ if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
     --network "$NETWORK" \
     -e DOCKER_NETWORK="$NETWORK" \
     -p 4566:4566 \
-    ministackorg/ministack
+    ministackorg/ministack >/dev/null
 else
   echo "==> MiniStack container already exists"
 
   if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]; then
     echo "==> Starting MiniStack"
-    docker start "$CONTAINER"
+    docker start "$CONTAINER" >/dev/null
   fi
 fi
 
@@ -75,17 +75,10 @@ rm bootstrap
 
 echo "==> Creating order-processing queue"
 
-aws \
-  --region "$REGION" \
-  --endpoint-url="$ENDPOINT" \
-  sqs create-queue \
-  --queue-name order-processing \
-  >/dev/null
-
 QUEUE_URL=$(aws \
   --region "$REGION" \
   --endpoint-url="$ENDPOINT" \
-  sqs get-queue-url \
+  sqs create-queue \
   --queue-name order-processing \
   --query 'QueueUrl' \
   --output text)
@@ -102,21 +95,51 @@ QUEUE_ARN=$(aws \
 INTERNAL_QUEUE_URL="$INTERNAL_ENDPOINT/000000000000/order-processing"
 
 # ---------------------------------------------------------
-# Lambdas
+# SNS
 # ---------------------------------------------------------
 
-echo "==> Creating create-order Lambda"
+echo "==> Creating order-events SNS topic"
 
-aws \
+TOPIC_ARN=$(aws \
   --region "$REGION" \
   --endpoint-url="$ENDPOINT" \
-  lambda create-function \
+  sns create-topic \
+  --name order-events \
+  --query 'TopicArn' \
+  --output text)
+
+# ---------------------------------------------------------
+# Lambda create-order
+# ---------------------------------------------------------
+
+echo "==> Deploying create-order Lambda"
+
+if aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda get-function \
   --function-name create-order \
-  --runtime provided.al2023 \
-  --handler bootstrap \
-  --zip-file fileb://function-create-order.zip \
-  --role arn:aws:iam::000000000000:role/lambda-role \
-  >/dev/null
+  >/dev/null 2>&1; then
+
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda update-function-code \
+    --function-name create-order \
+    --zip-file fileb://function-create-order.zip \
+    >/dev/null
+else
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda create-function \
+    --function-name create-order \
+    --runtime provided.al2023 \
+    --handler bootstrap \
+    --zip-file fileb://function-create-order.zip \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    >/dev/null
+fi
 
 aws \
   --region "$REGION" \
@@ -126,19 +149,47 @@ aws \
   --environment "Variables={ORDER_QUEUE_URL=$INTERNAL_QUEUE_URL,AWS_ENDPOINT_URL=$INTERNAL_ENDPOINT}" \
   >/dev/null
 
-echo "==> Creating process-order Lambda"
+# ---------------------------------------------------------
+# Lambda process-order
+# ---------------------------------------------------------
+
+echo "==> Deploying process-order Lambda"
+
+if aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda get-function \
+  --function-name process-order \
+  >/dev/null 2>&1; then
+
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda update-function-code \
+    --function-name process-order \
+    --zip-file fileb://function-process-order.zip \
+    >/dev/null
+else
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda create-function \
+    --function-name process-order \
+    --runtime provided.al2023 \
+    --handler bootstrap \
+    --zip-file fileb://function-process-order.zip \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    >/dev/null
+fi
 
 aws \
   --region "$REGION" \
   --endpoint-url="$ENDPOINT" \
-  lambda create-function \
+  lambda update-function-configuration \
   --function-name process-order \
-  --runtime provided.al2023 \
-  --handler bootstrap \
-  --zip-file fileb://function-process-order.zip \
-  --role arn:aws:iam::000000000000:role/lambda-role \
+  --environment "Variables={ORDER_EVENTS_TOPIC_ARN=$TOPIC_ARN,AWS_ENDPOINT_URL=$INTERNAL_ENDPOINT}" \
   >/dev/null
-
+  
 # ---------------------------------------------------------
 # SQS -> Lambda
 # ---------------------------------------------------------
@@ -224,6 +275,12 @@ aws \
   --stage-name dev \
   >/dev/null
 
+# ---------------------------------------------------------
+# Output
+# ---------------------------------------------------------
+
+API_URL="$ENDPOINT/restapis/$API_ID/dev/_user_request_/orders"
+
 echo
 echo "============================================"
 echo " Local environment ready"
@@ -232,6 +289,15 @@ echo
 echo "API ID:"
 echo "$API_ID"
 echo
-echo "Endpoint:"
-echo "$ENDPOINT/restapis/$API_ID/dev/_user_request_/orders"
+echo "API URL:"
+echo "$API_URL"
+echo
+echo "SQS:"
+echo "$QUEUE_URL"
+echo
+echo "SNS:"
+echo "$TOPIC_ARN"
+echo
+echo "Test:"
+echo "curl -X POST \"$API_URL\" -H \"Content-Type: application/json\" -d '{\"customer_id\":\"customer-123\",\"amount\":150.50}'"
 echo
