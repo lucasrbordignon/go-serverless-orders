@@ -13,6 +13,9 @@ build:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap ./cmd/process-order
 	zip -q function-process-order.zip bootstrap
 	rm bootstrap
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap ./cmd/notification-consumer
+	zip -q function-notification-consumer.zip bootstrap
+	rm bootstrap
 
 clean:
 	rm -f bootstrap
@@ -20,6 +23,7 @@ clean:
 	rm -f process-order
 	rm -f function-create-order.zip
 	rm -f function-process-order.zip
+	rm -f function-notification-consumer.zip
 	rm -f event.json
 	rm -f response.json
 

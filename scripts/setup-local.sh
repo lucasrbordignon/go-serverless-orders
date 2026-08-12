@@ -94,6 +94,25 @@ QUEUE_ARN=$(aws \
 
 INTERNAL_QUEUE_URL="$INTERNAL_ENDPOINT/000000000000/order-processing"
 
+echo "==> Creating notification queue"
+
+NOTIFICATION_QUEUE_URL=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs create-queue \
+  --queue-name notification-queue \
+  --query 'QueueUrl' \
+  --output text)
+
+NOTIFICATION_QUEUE_ARN=$(aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sqs get-queue-attributes \
+  --queue-url "$NOTIFICATION_QUEUE_URL" \
+  --attribute-names QueueArn \
+  --query 'Attributes.QueueArn' \
+  --output text)
+
 # ---------------------------------------------------------
 # SNS
 # ---------------------------------------------------------
@@ -107,6 +126,17 @@ TOPIC_ARN=$(aws \
   --name order-events \
   --query 'TopicArn' \
   --output text)
+
+echo "==> Subscribing notification queue to SNS"
+
+aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  sns subscribe \
+  --topic-arn "$TOPIC_ARN" \
+  --protocol sqs \
+  --notification-endpoint "$NOTIFICATION_QUEUE_ARN" \
+  >/dev/null
 
 # ---------------------------------------------------------
 # Lambda create-order
@@ -189,7 +219,41 @@ aws \
   --function-name process-order \
   --environment "Variables={ORDER_EVENTS_TOPIC_ARN=$TOPIC_ARN,AWS_ENDPOINT_URL=$INTERNAL_ENDPOINT}" \
   >/dev/null
-  
+
+# ---------------------------------------------------------
+# Lambda notification-consumer
+# ---------------------------------------------------------
+
+echo "==> Deploying notification-consumer Lambda"
+
+if aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda get-function \
+  --function-name notification-consumer \
+  >/dev/null 2>&1; then
+
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda update-function-code \
+    --function-name notification-consumer \
+    --zip-file fileb://function-notification-consumer.zip \
+    >/dev/null
+else
+  aws \
+    --region "$REGION" \
+    --endpoint-url="$ENDPOINT" \
+    lambda create-function \
+    --function-name notification-consumer \
+    --runtime provided.al2023 \
+    --handler bootstrap \
+    --zip-file fileb://function-notification-consumer.zip \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    >/dev/null
+fi
+
+
 # ---------------------------------------------------------
 # SQS -> Lambda
 # ---------------------------------------------------------
@@ -204,6 +268,20 @@ aws \
   --event-source-arn "$QUEUE_ARN" \
   --batch-size 1 \
   >/dev/null
+
+echo "==> Connecting notification-queue to notification-consumer"
+
+aws \
+  --region "$REGION" \
+  --endpoint-url="$ENDPOINT" \
+  lambda create-event-source-mapping \
+  --function-name notification-consumer \
+  --event-source-arn "$NOTIFICATION_QUEUE_ARN" \
+  --batch-size 1 \
+  >/dev/null
+
+
+echo "==> Subscribing notification queue to SNS"
 
 # ---------------------------------------------------------
 # API Gateway
