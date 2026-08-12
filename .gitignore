@@ -20,6 +20,7 @@ bootstrap-process-order
 
 function-process-order.zip
 function-create-order.zip
+function-notification-consumer.zip
 
 event.json
 response.json
