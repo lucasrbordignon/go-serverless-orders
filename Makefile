@@ -33,14 +33,20 @@ build:
 	zip -q function-notification-consumer.zip bootstrap
 	rm bootstrap
 
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap ./cmd/audit-consumer
+	zip -q function-audit-consumer.zip bootstrap
+	rm bootstrap
+
 clean:
 	rm -f bootstrap
 	rm -f create-order
 	rm -f process-order
 	rm -f notification-consumer
+	rm -f audit-consumer
 	rm -f function-create-order.zip
 	rm -f function-process-order.zip
 	rm -f function-notification-consumer.zip
+	rm -f function-audit-consumer.zip
 	rm -f event.json
 	rm -f response.json
 
