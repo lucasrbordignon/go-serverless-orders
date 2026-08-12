@@ -6,11 +6,13 @@ O objetivo é construir gradualmente uma arquitetura distribuída utilizando API
 
 Para desenvolvimento local, os serviços AWS são emulados utilizando **MiniStack** e Docker.
 
+---
+
 ## Arquitetura atual
 
-Atualmente, o seguinte fluxo está funcional:
+O fluxo abaixo está funcional:
 
-```text
+```text id="dmkvsa"
 Client
   │
   │ POST /orders
@@ -41,14 +43,17 @@ process-order
 4. A Lambda publica o pedido na fila `order-processing`.
 5. A API responde `202 Accepted`.
 6. O SQS mantém a mensagem até ela ser consumida.
-7. O Event Source Mapping dispara `process-order`.
-8. A Lambda processa a mensagem.
+7. O Event Source Mapping identifica mensagens disponíveis.
+8. A Lambda `process-order` é invocada.
+9. O pedido é processado assincronamente.
 
-Essa arquitetura permite que a API não precise aguardar o processamento completo do pedido.
+A API não precisa aguardar o processamento completo do pedido.
 
-## Arquitetura planejada
+---
 
-```text
+# Arquitetura planejada
+
+```text id="8b5ju6"
 Client
   │
   ▼
@@ -73,35 +78,38 @@ order-events
   ├── SQS notification
   │       │
   │       ▼
-  │    Lambda
+  │     Lambda
   │
   ├── SQS audit
   │       │
   │       ▼
-  │    Lambda
+  │     Lambda
   │
   └── outros consumidores
 ```
 
-Também serão adicionados:
+Posteriormente serão adicionados:
 
-```text
+```text id="34nb5v"
 SQS
  │
- ├── retry
- │
+ ├── Retry
  └── DLQ
 
 Consumers
  │
- └── idempotência
+ └── Idempotência
 
 AWS
  │
- └── observabilidade
+ ├── Logs
+ ├── Métricas
+ └── Observabilidade
 ```
 
-## Tecnologias
+---
+
+# Tecnologias
 
 - Go
 - AWS Lambda
@@ -112,10 +120,13 @@ AWS
 - MiniStack
 - Docker
 - AWS CLI
+- Make
 
-## Estrutura
+---
 
-```text
+# Estrutura
+
+```text id="w3hn69"
 .
 ├── cmd/
 │   ├── create-order/
@@ -127,13 +138,18 @@ AWS
 │       └── main_test.go
 │
 ├── scripts/
-│   └── # automação local será adicionada
+│   └── setup-local.sh
 │
+├── Makefile
 ├── .gitignore
 ├── go.mod
 ├── go.sum
 └── README.md
 ```
+
+---
+
+# Executando o projeto
 
 ## Pré-requisitos
 
@@ -143,92 +159,197 @@ AWS
 - Docker
 - AWS CLI
 - ZIP
+- Make
 
 Verifique:
 
-```bash
+```bash id="mzwzvy"
 go version
 docker --version
 aws --version
 zip --version
+make --version
 ```
 
-## Instalação
+---
 
-Instale as dependências:
+## Instalar dependências
 
-```bash
+```bash id="g6t5nz"
 go mod download
 ```
 
-Execute os testes:
+---
 
-```bash
+## Executar testes
+
+```bash id="dlfnlq"
+make test
+```
+
+Equivalente a:
+
+```bash id="ir7rqv"
 go test ./... -v
 ```
 
-## MiniStack
+---
 
-### Criar rede Docker
+# Ambiente AWS local
+
+O projeto utiliza MiniStack para emular os serviços AWS localmente.
+
+A infraestrutura não precisa ser criada manualmente.
+
+Execute:
+
+```bash id="7ebc57"
+make setup
+```
+
+Esse comando:
+
+```text id="xlfu80"
+make setup
+     │
+     ▼
+scripts/setup-local.sh
+     │
+     ├── Docker network
+     ├── MiniStack
+     ├── Build das Lambdas
+     ├── SQS
+     ├── Lambdas
+     ├── Event Source Mapping
+     ├── API Gateway
+     └── Deployment
+```
+
+Ao final, será exibido o endpoint da API:
+
+```text id="82zbco"
+============================================
+ Local environment ready
+============================================
+
+API ID:
+xxxxxxxx
+
+Endpoint:
+http://localhost:4566/restapis/xxxxxxxx/dev/_user_request_/orders
+```
+
+---
+
+# Docker network
 
 As Lambdas são executadas em containers.
 
-Por isso, criamos uma rede compartilhada para permitir comunicação entre os containers das Lambdas e o MiniStack.
+O ambiente utiliza uma rede Docker compartilhada:
 
-```bash
-docker network create ministack-net
+```text id="vnvh0a"
+ministack-net
 ```
 
-### Iniciar MiniStack
+Arquitetura local:
 
-```bash
-docker run -d \
-  --name ministack \
-  --network ministack-net \
-  -e DOCKER_NETWORK=ministack-net \
-  -p 4566:4566 \
-  ministackorg/ministack
+```text id="6otzgb"
+Docker
+│
+└── ministack-net
+      │
+      ├── ministack
+      │     │
+      │     ├── API Gateway
+      │     ├── SQS
+      │     └── outros serviços AWS
+      │
+      ├── Lambda create-order
+      │
+      └── Lambda process-order
 ```
 
-Se o container já existir:
+Do host, o MiniStack é acessado através de:
 
-```bash
-docker start ministack
-```
-
-## AWS CLI
-
-Configure credenciais locais:
-
-```bash
-export AWS_ACCESS_KEY_ID=test
-export AWS_SECRET_ACCESS_KEY=test
-export AWS_DEFAULT_REGION=us-east-1
-```
-
-Essas credenciais são utilizadas somente no ambiente AWS local.
-
-O endpoint do MiniStack acessível pela máquina host é:
-
-```text
+```text id="i6cwwj"
 http://localhost:4566
 ```
 
-Dentro dos containers Lambda, o MiniStack é acessado através de:
+Dentro dos containers Lambda:
 
-```text
+```text id="obx4n8"
 http://ministack:4566
 ```
 
-Isso ocorre porque `localhost` dentro de um container aponta para o próprio container.
+`localhost` dentro de um container aponta para o próprio container, portanto as Lambdas utilizam o hostname `ministack` para acessar os serviços AWS locais.
 
-## Lambda `create-order`
+---
 
-Responsável por receber e validar novos pedidos e publicá-los no SQS.
+# Makefile
 
-Entrada:
+O projeto possui comandos para simplificar o desenvolvimento.
 
-```json
+## Setup
+
+Cria todo o ambiente local:
+
+```bash id="5k7r2d"
+make setup
+```
+
+## Testes
+
+```bash id="of7dnp"
+make test
+```
+
+## Build
+
+Compila e empacota as duas Lambdas:
+
+```bash id="mz4gpo"
+make build
+```
+
+São gerados:
+
+```text id="nsgx25"
+function-create-order.zip
+function-process-order.zip
+```
+
+## Limpeza
+
+Remove artefatos locais:
+
+```bash id="63l1n4"
+make clean
+```
+
+## Reset
+
+Remove o container atual do MiniStack:
+
+```bash id="4fh3no"
+make reset
+```
+
+Para recriar todo o ambiente:
+
+```bash id="7jd8qm"
+make reset
+make setup
+```
+
+---
+
+# Lambda `create-order`
+
+Responsável pela entrada de novos pedidos.
+
+Recebe:
+
+```json id="e03cml"
 {
   "customer_id": "customer-123",
   "amount": 150.5
@@ -237,14 +358,14 @@ Entrada:
 
 Fluxo:
 
-```text
+```text id="dxv9an"
 APIGatewayProxyRequest
         │
         ▼
    JSON parsing
         │
         ▼
-    Validation
+     Validation
         │
         ▼
    SQS SendMessage
@@ -253,45 +374,30 @@ APIGatewayProxyRequest
    202 Accepted
 ```
 
-### Variáveis de ambiente
+A Lambda utiliza o AWS SDK for Go v2 para publicar no SQS.
 
-```text
+### Variáveis
+
+```text id="ggkex5"
 ORDER_QUEUE_URL=http://ministack:4566/000000000000/order-processing
 AWS_ENDPOINT_URL=http://ministack:4566
 ```
 
-## Build da `create-order`
+---
 
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-go build -o bootstrap ./cmd/create-order
-```
+# API Gateway
 
-Empacote:
+Endpoint:
 
-```bash
-zip function.zip bootstrap
-```
-
-## API Gateway
-
-A aplicação expõe:
-
-```http
+```http id="ypz85l"
 POST /orders
 ```
 
-No ambiente local:
+Teste:
 
-```text
-http://localhost:4566/restapis/{API_ID}/dev/_user_request_/orders
-```
-
-Exemplo:
-
-```bash
+```bash id="z5s37u"
 curl -X POST \
-  "http://localhost:4566/restapis/$API_ID/dev/_user_request_/orders" \
+  "http://localhost:4566/restapis/{API_ID}/dev/_user_request_/orders" \
   -H "Content-Type: application/json" \
   -d '{
     "customer_id": "customer-777",
@@ -301,7 +407,7 @@ curl -X POST \
 
 Resposta:
 
-```json
+```json id="l1c7i5"
 {
   "message": "order queued"
 }
@@ -309,23 +415,25 @@ Resposta:
 
 Status:
 
-```text
+```text id="o5sgrm"
 202 Accepted
 ```
 
-O `202` é utilizado porque a requisição foi aceita, mas o processamento ocorre de forma assíncrona.
+O `202` indica que o pedido foi aceito, mas será processado assincronamente.
 
-## SQS
+---
+
+# SQS
 
 Fila:
 
-```text
+```text id="0bfm7x"
 order-processing
 ```
 
 Responsabilidade:
 
-```text
+```text id="j2wscu"
 create-order
      │
      ▼
@@ -335,23 +443,35 @@ order-processing
 process-order
 ```
 
-O SQS desacopla a criação do pedido do processamento.
+O SQS funciona como buffer entre produção e processamento.
 
-A Lambda `create-order` não precisa saber quando ou como o pedido será processado.
+Isso desacopla as Lambdas:
 
-## Lambda `process-order`
+```text id="n1hkb3"
+create-order
 
-Responsável por consumir mensagens da fila `order-processing`.
+não precisa conhecer
 
-Ela recebe:
+process-order
+```
 
-```go
+A primeira Lambda apenas publica uma mensagem.
+
+---
+
+# Lambda `process-order`
+
+Consome mensagens da fila `order-processing`.
+
+O handler recebe:
+
+```go id="v6s65s"
 events.SQSEvent
 ```
 
-Uma invocação pode conter uma ou mais mensagens:
+Uma invocação pode possuir vários registros:
 
-```text
+```text id="lxhig3"
 SQSEvent
  │
  ├── Record
@@ -359,155 +479,218 @@ SQSEvent
  └── Record
 ```
 
-Cada `record.Body` contém o pedido publicado por `create-order`.
+Cada `record.Body` contém o pedido.
 
-Atualmente o processamento registra:
+Atualmente:
 
-```text
-processing order: customer=customer-777 amount=450.00
+```text id="9byx1q"
+processing order:
+customer=customer-777
+amount=450.00
 ```
 
-## Event Source Mapping
+---
 
-O SQS não chama diretamente nosso código.
+# Event Source Mapping
 
-Existe um Event Source Mapping responsável por conectar:
+O Event Source Mapping conecta:
 
-```text
+```text id="sdjnsl"
 SQS
 order-processing
       │
-      │ Event Source Mapping
+      ▼
+Event Source Mapping
+      │
       ▼
 Lambda
 process-order
 ```
 
-Atualmente utilizamos:
+Atualmente:
 
-```text
+```text id="3p9i3s"
 BatchSize = 1
 ```
 
-Isso facilita o estudo inicial do comportamento do processamento.
+Isso facilita visualizar cada processamento individualmente.
 
-Posteriormente podemos trabalhar com batches maiores.
+Posteriormente podemos testar processamento em batch.
 
-## Testes
+---
 
-Execute todos:
+# Testes
 
-```bash
-go test ./...
+Os handlers possuem testes unitários.
+
+Execute:
+
+```bash id="hflc40"
+make test
 ```
 
-Com detalhes:
+Atualmente são testados:
 
-```bash
-go test ./... -v
-```
-
-Temos testes para:
-
-- handler HTTP;
-- parsing do pedido;
+- parsing do request;
 - validação;
-- publicação através de uma abstração de Queue;
-- processamento de eventos SQS;
-- mensagens SQS inválidas.
+- handler HTTP;
+- publicação através da abstração de Queue;
+- eventos SQS;
+- mensagens inválidas.
 
-A comunicação com SQS é abstraída através de uma interface para permitir mocks nos testes.
+Para evitar dependência da infraestrutura nos testes, o acesso ao SQS é abstraído:
 
-```text
-                 Queue
-                   ▲
-          ┌────────┴────────┐
-          │                 │
-      sqs.Client        mockQueue
-          │                 │
-      produção            testes
+```text id="0zwt0l"
+                  Queue
+                    ▲
+           ┌────────┴────────┐
+           │                 │
+       sqs.Client        mockQueue
+           │                 │
+       runtime             testes
 ```
 
-## Build das Lambdas
+---
 
-### create-order
+# Build
 
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-go build -o bootstrap ./cmd/create-order
+As Lambdas utilizam:
 
-zip function.zip bootstrap
+```text id="3xthvt"
+GOOS=linux
+GOARCH=amd64
+CGO_ENABLED=0
 ```
 
-### process-order
+Isso gera binários Linux compatíveis com o runtime utilizado pela Lambda.
 
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-go build -o bootstrap-process-order ./cmd/process-order
+Execute:
 
-cp bootstrap-process-order bootstrap
-
-zip function-process-order.zip bootstrap
-
-rm bootstrap
+```bash id="h02ox6"
+make build
 ```
 
-## Arquivos locais
+Os executáveis são empacotados em arquivos ZIP contendo:
 
-Os artefatos de build não devem ser versionados:
-
-```gitignore
-create-order
-process-order
-
+```text id="z8wjqk"
 bootstrap
-bootstrap-process-order
-
-function.zip
-function-process-order.zip
-
-event.json
-response.json
 ```
 
-## Estado atual
+que é o entrypoint esperado pelo runtime `provided.al2023`.
+
+---
+
+# Setup automatizado
+
+O script:
+
+```text id="g7ftve"
+scripts/setup-local.sh
+```
+
+é responsável por provisionar o ambiente local.
+
+Atualmente ele cria:
+
+```text id="j7mz3m"
+Docker network
+      ↓
+MiniStack
+      ↓
+SQS order-processing
+      ↓
+Lambda create-order
+      ↓
+Lambda process-order
+      ↓
+Event Source Mapping
+      ↓
+API Gateway
+      ↓
+Stage dev
+```
+
+Isso torna o ambiente reproduzível.
+
+Em vez de executar manualmente dezenas de comandos AWS:
+
+```bash id="stnh21"
+make setup
+```
+
+---
+
+# Fluxo completo atual
+
+```text id="4c6j72"
+                     HTTP
+
+Client
+  │
+  │ POST /orders
+  ▼
+API Gateway
+  │
+  ▼
+create-order
+  │
+  │ SendMessage
+  ▼
+
+               ASYNC
+
+SQS order-processing
+  │
+  │ Event Source Mapping
+  ▼
+process-order
+  │
+  ▼
+processing
+```
+
+---
+
+# Estado do projeto
 
 - [x] Inicialização do projeto Go
 - [x] Handler `create-order`
 - [x] Testes unitários
 - [x] Parsing do request
-- [x] Validação do request
+- [x] Validação
 - [x] MiniStack
 - [x] Docker network
-- [x] Build para AWS Lambda
-- [x] Execução da Lambda local
+- [x] AWS SDK for Go v2
 - [x] API Gateway
 - [x] `POST /orders`
 - [x] API Gateway → Lambda
 - [x] SQS `order-processing`
-- [x] AWS SDK for Go v2
-- [x] Lambda `create-order` → SQS
+- [x] Lambda → SQS
 - [x] Lambda `process-order`
-- [x] Testes de eventos SQS
 - [x] Event Source Mapping
-- [x] SQS → Lambda `process-order`
-- [x] Fluxo assíncrono ponta a ponta
-- [ ] Automatização do ambiente local
+- [x] SQS → Lambda
+- [x] Fluxo assíncrono funcional
+- [x] Build automatizado
+- [x] Setup local automatizado
+- [x] Makefile
+- [ ] Setup idempotente
 - [ ] SNS `order-events`
-- [ ] Lambda `process-order` → SNS
+- [ ] `process-order` → SNS
 - [ ] Fan-out
 - [ ] Consumers adicionais
 - [ ] Retry
 - [ ] Dead Letter Queue
 - [ ] Idempotência
 - [ ] Observabilidade
-- [ ] Testes end-to-end
+- [ ] Testes end-to-end automatizados
 
-## Próximas etapas
+---
 
-O próximo estágio da arquitetura será:
+# Próxima etapa
 
-```text
+O próximo componente será o SNS:
+
+```text id="92b3ki"
 process-order
       │
       │ Publish
@@ -516,16 +699,18 @@ SNS
 order-events
 ```
 
-O SNS permitirá distribuir um mesmo evento para diferentes consumidores:
+Com isso poderemos distribuir um evento para múltiplos consumidores:
 
-```text
-                 order.processed
-                       │
-                       ▼
-                      SNS
-                 ┌─────┼─────┐
-                 ▼     ▼     ▼
-               Email  Audit Analytics
+```text id="pgx83q"
+                  order.processed
+                        │
+                        ▼
+                 SNS order-events
+                        │
+              ┌─────────┼─────────┐
+              │         │         │
+              ▼         ▼         ▼
+          Notification Audit   Analytics
 ```
 
-Isso permitirá explorar **fan-out e arquitetura orientada a eventos** sem acoplar `process-order` aos consumidores finais.
+Essa etapa introduzirá o padrão **publish/subscribe** e **fan-out** na arquitetura.
