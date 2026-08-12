@@ -4,14 +4,42 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 type CreateOrderRequest struct {
 	CustomerID string  `json:"customer_id"`
 	Amount     float64 `json:"amount"`
+}
+
+type Queue interface {
+	SendMessage(
+		ctx context.Context,
+		params *sqs.SendMessageInput,
+		optFns ...func(*sqs.Options),
+	) (*sqs.SendMessageOutput, error)
+}
+
+var sqsClient Queue
+
+func init() {
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		panic(err)
+	}
+
+	sqsClient = sqs.NewFromConfig(cfg, func(o *sqs.Options) {
+		if endpoint := os.Getenv("AWS_ENDPOINT_URL"); endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+		}
+	})
 }
 
 func handler(
@@ -41,8 +69,29 @@ func handler(
 		}, nil
 	}
 
+	messageBody, err := json.Marshal(body)
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       `{"error":"internal server error"}`,
+		}, nil
+	}
+
+	queueURL := os.Getenv("ORDER_QUEUE_URL")
+
+	_, err = sqsClient.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(string(messageBody)),
+	})
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       `{"error":"internal server error"}`,
+		}, nil
+	}
+
 	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
+		StatusCode: http.StatusAccepted,
 		Body:       `{"message":"order received"}`,
 	}, nil
 }
